@@ -50,24 +50,8 @@ requireContract(sameEntries(agentTools, EXPECTED_AGENT_TOOLS), "agent tools must
 requireContract(server?.command === EXPECTED_COMMAND, "attack-path must use the packaged native sidecar");
 requireContract(server?.cwd === EXPECTED_CWD, "attack-path runtime data must stay outside the package");
 
-const frontendSource = await readFile(`${PLUGIN_ROOT}/com.xsec.desktop/frontend/index.js`, "utf8");
-requireContract(
-  /^const\s+SUBAGENT_PLUGIN_ID\s*=\s*"com\.xsec\.workspace\.sub-agent";$/m.test(frontendSource),
-  "attack-path frontend must declare the SUBAGENT_PLUGIN_ID contract constant",
-);
-requireContract(
-  /^const\s+SUBAGENT_DETAIL_TOOL_ID\s*=\s*"subagent-detail";$/m.test(frontendSource),
-  "attack-path frontend must declare the SUBAGENT_DETAIL_TOOL_ID contract constant",
-);
-const openSubagentSource = frontendSource.match(
-  /^  const openSubagent = async \(subagent, title, button\) => \{[\s\S]*?^  \};$/m,
-)?.[0];
-requireContract(typeof openSubagentSource === "string", "attack-path frontend must define openSubagent");
-requireContract(
-  /pluginId:\s*SUBAGENT_PLUGIN_ID/.test(openSubagentSource),
-  "attack-path openSubagent must pass pluginId: SUBAGENT_PLUGIN_ID",
-);
-requireContract(
-  /toolId:\s*SUBAGENT_DETAIL_TOOL_ID/.test(openSubagentSource),
-  "attack-path openSubagent must pass toolId: SUBAGENT_DETAIL_TOOL_ID",
-);
+const controller = await readFile(`${PLUGIN_ROOT}/frontend-src/controller.ts`, "utf8");
+requireContract(/pluginId:\s*'com\.xsec\.workspace\.sub-agent'/.test(controller), "attack-path must open its declared sub-agent dependency");
+requireContract(/toolId:\s*'subagent-detail'/.test(controller), "attack-path must target the published sub-agent detail tool");
+requireContract(/this\.host\.request\(RPC\.open/.test(controller), "sub-agent navigation must use the declared Host RPC");
+console.log('Portable contract verified: 8 agent tools and sub-agent detail navigation');

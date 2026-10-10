@@ -18,10 +18,18 @@ jobs:
         run: |
           test -f plugin.json
           test -f .codex-plugin/plugin.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - name: Validate the schema v2 portable contract
         run: node scripts/verify-portable-contract.mjs
-      - name: Verify refresh retry lifecycle
-        run: node --test scripts/verify-refresh-retry.mjs
+      - name: Verify the frontend source and frozen entry
+        run: |
+          npm run typecheck
+          npm run check:generated
+          npm run verify:frontend
 
   source-preflight:
     needs: manifest

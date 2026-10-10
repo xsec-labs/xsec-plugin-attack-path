@@ -1,0 +1,9 @@
+/node_modules
+/target
+/dist
+/bin
+/.xsec-build
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.xsec-plugin
