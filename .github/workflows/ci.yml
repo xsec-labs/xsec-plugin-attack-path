@@ -18,7 +18,7 @@ jobs:
         run: |
           test -f plugin.json
           test -f .codex-plugin/plugin.json
-      - name: Validate the schema v2 portable contract
+      - name: Validate the schema v3 portable contract
         run: node scripts/verify-portable-contract.mjs
       - name: Verify refresh retry lifecycle
         run: node --test scripts/verify-refresh-retry.mjs
