@@ -343,9 +343,9 @@ function installStyles() {
       --ap-canvas:var(--xsec-window-background,var(--ap-d-canvas));--ap-surface:var(--xsec-content-surface,var(--ap-d-surface));
       --ap-text:var(--xsec-text-primary,var(--ap-d-text));--ap-muted:var(--xsec-text-secondary,var(--ap-d-muted));
       --ap-danger:var(--xsec-status-error,var(--ap-d-danger));--ap-success:var(--xsec-status-success,var(--ap-d-success));--ap-warning:var(--xsec-status-warning,var(--ap-d-warning));
-      --ap-accent:color-mix(in srgb,var(--xsec-text-accent,#0169cc) 72%,var(--ap-text));
+      --ap-accent:color-mix(in srgb,var(--xsec-text-accent,#0169cc) 68%,var(--ap-text));
       --ap-fill:color-mix(in srgb,var(--ap-text) 6%,transparent);--ap-fill-hover:color-mix(in srgb,var(--ap-text) 9%,transparent);--ap-fill-pressed:color-mix(in srgb,var(--ap-text) 13%,transparent);
-      --ap-hairline:color-mix(in srgb,var(--ap-text) 9%,transparent);--ap-focus:color-mix(in srgb,var(--ap-accent) 28%,transparent);
+      --ap-hairline:color-mix(in srgb,var(--ap-text) 10%,transparent);--ap-focus:color-mix(in srgb,var(--ap-accent) 28%,transparent);
       --ap-radius:var(--xsec-radius-md,8px);--ap-radius-lg:var(--xsec-radius-lg,12px);
       font-family:var(--xsec-font-family,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif);
     }
