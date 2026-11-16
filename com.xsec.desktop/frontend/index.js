@@ -17,6 +17,32 @@ const MAX_REFRESH_RETRIES = 3;
 const REFRESH_RETRY_BASE_MS = 750;
 const RESOURCE_UPDATE_STREAM = "xsec.attack-path.resource.updated";
 const SVG_NS = "http://www.w3.org/2000/svg";
+// 画布上的节点比布局坐标宽松：布局（layoutTreeNodes）与 Desktop 原生面板共用一份夹具，这里只在显示时放大间距。
+const VIEW_SCALE_X = 1.24;
+const VIEW_SCALE_Y = 1.2;
+const NODE_VIEW_WIDTH = 164;
+const NODE_VIEW_HEIGHT = 88;
+const FIT_MIN_SCALE = 0.6;
+const FIT_MARGIN = 32;
+const WHEEL_ZOOM_RATE = 1.0025;
+const KIND_LABELS = { task: "任务", action: "动作", finding: "发现" };
+// 子 Agent 状态的中文名与语气，与 Desktop 的状态表一致；表里没有的值原样显示。
+const SUBAGENT_STATUSES = {
+  running: ["运行中", "running"], active: ["进行中", "running"], starting: ["启动中", "running"],
+  queued: ["等待运行", "waiting"], waiting: ["等待运行", "waiting"], pending: ["待处理", "waiting"],
+  waiting_user: ["等待用户", "waiting"], waiting_permission: ["等待权限", "waiting"], waiting_elicitation: ["等待输入", "waiting"],
+  recovery_required: ["需要恢复", "waiting"], interrupted: ["已中断", "waiting"], stopping: ["停止中", "waiting"],
+  completed: ["已完成", "success"], done: ["已完成", "success"],
+  failed: ["失败", "error"], error: ["出错", "error"],
+  idle: ["空闲", "neutral"], cancelled: ["已取消", "neutral"], canceled: ["已取消", "neutral"], stopped: ["已停止", "neutral"], terminated: ["已终止", "neutral"],
+};
+const ICONS = {
+  minus: ["M5 12h14"],
+  plus: ["M5 12h14", "M12 5v14"],
+  refresh: ["M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", "M21 3v5h-5", "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", "M8 16H3v5"],
+  branch: ["M6 3v12", "M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6z", "M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z", "M18 9a9 9 0 0 1-9 9"],
+  alert: ["M12 9v4", "M12 17h.01", "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"],
+};
 
 /**
  * Pure refresh-retry timer policy: a newer schedule always replaces any pending
@@ -182,6 +208,36 @@ function element(tag, className, text) {
   return node;
 }
 
+function icon(name, size = 16) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.75");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of ICONS[name]) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+export function subagentStatusStyle(status) {
+  const value = typeof status === "string" ? status.trim() : "";
+  if (!value) return { label: "未知", tone: "neutral" };
+  const known = SUBAGENT_STATUSES[value.toLowerCase()];
+  return known ? { label: known[0], tone: known[1] } : { label: value, tone: "neutral" };
+}
+
+function viewPosition(position) {
+  return { x: position.x * VIEW_SCALE_X, y: position.y * VIEW_SCALE_Y };
+}
+
 function clampScale(scale) {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 }
@@ -279,25 +335,54 @@ function installStyles() {
   if (document.getElementById("xsec-attack-path-styles")) return;
   const style = document.createElement("style");
   style.id = "xsec-attack-path-styles";
+  // 颜色全部由宿主推来的 --xsec-* 设计 token 推出（亮暗主题、强调色都跟随 Desktop）；宿主没有推送时用 Desktop 的默认值。
   style.textContent = `
-    :root{color-scheme:dark;font-family:var(--xsec-font-family,Inter,"Segoe UI",sans-serif)}
-    :root[data-xsec-theme="light"]{color-scheme:light}*{box-sizing:border-box}
-    html,body,[data-xsec-plugin-root]{width:100%;height:100%;margin:0;overflow:hidden}button{font:inherit}
-    .ap-root{display:flex;width:100%;height:100%;min-width:0;min-height:280px;flex-direction:column;background:#080b10;color:#d6deeb}
-    .ap-head{display:flex;min-height:42px;align-items:center;gap:14px;padding:8px 12px;border-bottom:1px solid #232936;background:#0c1018}
-    .ap-title{font-size:13px;font-weight:650;white-space:nowrap}.ap-legend{display:flex;min-width:0;align-items:center;gap:6px;margin-left:auto;color:#8b94a7;font-size:11px;white-space:nowrap}.ap-legend b{margin-right:6px;color:#e6e9ef}
-    .ap-dot{width:8px;height:8px;border-radius:50%}.ap-dot.task{background:#5b74ff}.ap-dot.action{background:#2ecc9b}.ap-dot.finding{background:#f0a935}
-    .ap-controls{display:flex;flex:0 0 auto;gap:4px}.ap-controls button{height:26px;min-width:28px;padding:0 7px;border:1px solid #293144;border-radius:6px;background:#101522;color:#d6deeb;cursor:pointer}.ap-controls button:hover{border-color:#536382;background:#171e2e}
-    .ap-status{display:none;max-width:46%;overflow:hidden;padding:4px 8px;border:1px solid rgba(245,163,163,.35);border-radius:6px;background:#2b1118;color:#f5a3a3;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.ap-status.show{display:block}
-    .ap-operations{display:none;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #59323c;background:#211017;color:#f5b6c2;font-size:11px}.ap-operations.show{display:flex}.ap-operations span{overflow:hidden;flex:1;text-overflow:ellipsis;white-space:nowrap}.ap-operations button{padding:3px 8px;border:1px solid #824452;border-radius:5px;background:#35151e;color:#ffd3dc;cursor:pointer}.ap-operations button:disabled{cursor:wait;opacity:.6}
-    .ap-canvas{position:relative;min-height:0;flex:1;overflow:hidden;cursor:grab;touch-action:none;background:radial-gradient(circle at 50% 8%,rgba(91,116,255,.07),transparent 34%),#080b10}.ap-canvas.dragging{cursor:grabbing}
-    .ap-stage{position:absolute;top:0;left:0;transform-origin:0 0}.ap-links{position:absolute;top:0;left:0;overflow:visible;pointer-events:none}.ap-link{fill:none;stroke:#344057;stroke-width:1.25;stroke-linecap:round;stroke-dasharray:7 8;animation:ap-flow 1.2s linear infinite}.ap-link.task{stroke:#5b74ff}.ap-link.action{stroke:#2ecc9b}.ap-link.finding{stroke:#f0a935}
-    .ap-node{position:absolute;top:0;left:0;width:130px;min-height:58px;padding:13px 10px 8px;border:1px solid #232936;border-radius:8px;background:#12151c;color:#d6deeb;cursor:pointer;text-align:center;user-select:none;transition:border-color .12s,background .12s,outline-color .12s}.ap-node:hover{border-color:#52617d}.ap-node.no-agent{cursor:default;opacity:.78}
-    .ap-node .ap-chip{position:absolute;top:-9px;left:10px;padding:1px 7px;border-radius:5px;color:#fff;font-size:10px;font-weight:700}.ap-node .ap-node-title{display:-webkit-box;overflow:hidden;font-size:12.5px;font-weight:600;line-height:1.35;-webkit-box-orient:vertical;-webkit-line-clamp:2}.ap-node .ap-id{display:block;margin-top:2px;color:#8b94a7;font-size:10.5px}.ap-node .ap-reason{display:block;overflow:hidden;margin-top:2px;color:#ffb86b;font-size:9.5px;text-overflow:ellipsis;white-space:nowrap}
-    .ap-node.task{border-color:rgba(91,116,255,.5);background:rgba(91,116,255,.12)}.ap-node.task .ap-chip{background:#3f51c7}.ap-node.action{border-color:rgba(46,204,155,.45);background:rgba(46,204,155,.1)}.ap-node.action .ap-chip{background:#16765f}.ap-node.finding{border-color:rgba(240,169,53,.45);background:rgba(240,169,53,.1)}.ap-node.finding .ap-chip{background:#9a5d00}.ap-node.selected{outline:2px solid #5b74ff;outline-offset:2px}
-    .ap-empty{display:grid;height:100%;place-content:center;justify-items:center;gap:10px;padding:28px;color:#8b94a7;text-align:center}.ap-empty strong{color:#d6deeb;font-size:14px}.ap-empty span{max-width:320px;font-size:12px;line-height:1.6}.ap-loading{width:28px;height:28px;border:2px solid #293144;border-top-color:#5b74ff;border-radius:50%;animation:ap-spin .8s linear infinite}
-    @keyframes ap-flow{to{stroke-dashoffset:-15}}@keyframes ap-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.ap-link,.ap-loading{animation:none}}@media (max-width:520px){.ap-head{align-items:flex-start;flex-wrap:wrap}.ap-legend{order:3;width:100%;margin-left:0}.ap-status{max-width:100%}}
-    :root[data-xsec-theme="light"] .ap-root{background:#f7f8fb;color:#202737}:root[data-xsec-theme="light"] .ap-head{border-color:#dde2ea;background:#fff}:root[data-xsec-theme="light"] .ap-canvas{background:radial-gradient(circle at 50% 8%,rgba(74,103,255,.08),transparent 34%),#f7f8fb}:root[data-xsec-theme="light"] .ap-title,:root[data-xsec-theme="light"] .ap-legend b,:root[data-xsec-theme="light"] .ap-empty strong{color:#202737}:root[data-xsec-theme="light"] .ap-controls button{border-color:#d7dce5;background:#fff;color:#35405a}:root[data-xsec-theme="light"] .ap-node{color:#202737}:root[data-xsec-theme="light"] .ap-node .ap-id{color:#667085}
+    :root{color-scheme:light dark;--ap-d-canvas:#f7f7f8;--ap-d-surface:#fff;--ap-d-text:#18181b;--ap-d-muted:#62626b;--ap-d-danger:#b42318;--ap-d-success:#187344;--ap-d-warning:#8a5700}
+    @media (prefers-color-scheme:dark){:root{--ap-d-canvas:#111113;--ap-d-surface:#19191c;--ap-d-text:#f4f4f5;--ap-d-muted:#a1a1aa;--ap-d-danger:#ff938a;--ap-d-success:#7ad6a0;--ap-d-warning:#e9bd70}}
+    :root{
+      --ap-canvas:var(--xsec-window-background,var(--ap-d-canvas));--ap-surface:var(--xsec-content-surface,var(--ap-d-surface));
+      --ap-text:var(--xsec-text-primary,var(--ap-d-text));--ap-muted:var(--xsec-text-secondary,var(--ap-d-muted));
+      --ap-danger:var(--xsec-status-error,var(--ap-d-danger));--ap-success:var(--xsec-status-success,var(--ap-d-success));--ap-warning:var(--xsec-status-warning,var(--ap-d-warning));
+      --ap-accent:color-mix(in srgb,var(--xsec-text-accent,#0169cc) 72%,var(--ap-text));
+      --ap-fill:color-mix(in srgb,var(--ap-text) 6%,transparent);--ap-fill-hover:color-mix(in srgb,var(--ap-text) 9%,transparent);--ap-fill-pressed:color-mix(in srgb,var(--ap-text) 13%,transparent);
+      --ap-hairline:color-mix(in srgb,var(--ap-text) 9%,transparent);--ap-focus:color-mix(in srgb,var(--ap-accent) 28%,transparent);
+      --ap-radius:var(--xsec-radius-md,8px);--ap-radius-lg:var(--xsec-radius-lg,12px);
+      font-family:var(--xsec-font-family,Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif);
+    }
+    *{box-sizing:border-box}html,body,[data-xsec-plugin-root]{width:100%;height:100%;margin:0;overflow:hidden}button{font:inherit}
+    .ap-root{display:flex;width:100%;height:100%;min-width:0;min-height:280px;flex-direction:column;background:var(--ap-surface);color:var(--ap-text);font-size:13px;line-height:1.4;-webkit-font-smoothing:antialiased}
+    .ap-head{display:flex;min-height:48px;align-items:center;gap:12px;padding:8px 12px 8px 16px;border-bottom:1px solid var(--ap-hairline)}
+    .ap-title{font-size:14px;font-weight:600;white-space:nowrap}
+    .ap-legend{display:flex;min-width:0;align-items:center;gap:6px;margin-left:auto}
+    .ap-badge{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;background:color-mix(in srgb,var(--ap-kind) 12%,transparent);color:var(--ap-kind);font-size:12px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+    .task{--ap-kind:var(--ap-accent)}.action{--ap-kind:var(--ap-success)}.finding{--ap-kind:var(--ap-warning)}
+    .ap-controls{display:flex;flex:0 0 auto;align-items:center;gap:2px}
+    .ap-zoom{display:flex;align-items:center;padding:2px;border-radius:var(--ap-radius);background:var(--ap-fill)}
+    .ap-btn{display:inline-grid;height:28px;min-width:28px;place-items:center;padding:0 6px;border:0;border-radius:6px;background:transparent;color:var(--ap-text);cursor:pointer;transition:background .12s}
+    .ap-btn:hover{background:var(--ap-fill-hover)}.ap-btn:active{background:var(--ap-fill-pressed)}.ap-btn:focus-visible,.ap-node:focus-visible,.ap-action:focus-visible{outline:2px solid var(--ap-accent);outline-offset:1px}
+    .ap-btn.ap-scale{min-width:52px;color:var(--ap-muted);font-size:12px;font-variant-numeric:tabular-nums}.ap-btn.ap-refresh{margin-left:4px;color:var(--ap-muted)}.ap-btn.spinning svg{animation:ap-spin .8s linear infinite}
+    .ap-strip{display:none;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--ap-hairline);background:color-mix(in srgb,var(--ap-tone) 9%,transparent);color:var(--ap-tone);font-size:12px}.ap-strip.show{display:flex}
+    .ap-strip svg{flex:0 0 auto}.ap-strip span{overflow:hidden;min-width:0;flex:1;color:var(--ap-text);text-overflow:ellipsis;white-space:nowrap}
+    .ap-status{--ap-tone:var(--ap-danger)}.ap-operations{--ap-tone:var(--ap-warning)}
+    .ap-action{height:26px;padding:0 10px;border:0;border-radius:6px;background:var(--ap-fill);color:var(--ap-text);font-size:12px;font-weight:500;cursor:pointer}.ap-action:hover{background:var(--ap-fill-hover)}.ap-action:disabled{cursor:wait;opacity:.55}
+    .ap-canvas{position:relative;min-height:0;flex:1;overflow:hidden;cursor:grab;touch-action:none;background-color:var(--ap-canvas);background-image:radial-gradient(circle,color-mix(in srgb,var(--ap-text) 11%,transparent) 1px,transparent 1.5px);background-size:24px 24px}.ap-canvas.dragging{cursor:grabbing}
+    .ap-stage{position:absolute;top:0;left:0;transform-origin:0 0}.ap-links{position:absolute;top:0;left:0;overflow:visible;pointer-events:none}
+    .ap-link{fill:none;stroke:color-mix(in srgb,var(--ap-kind) 46%,transparent);stroke-width:1.5;stroke-linecap:round}.ap-link.live{stroke:var(--ap-kind);stroke-dasharray:5 7;animation:ap-flow 1s linear infinite}
+    .ap-node{position:absolute;top:0;left:0;display:flex;width:${NODE_VIEW_WIDTH}px;height:${NODE_VIEW_HEIGHT}px;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--ap-kind) 34%,var(--ap-hairline));border-radius:var(--ap-radius);background:var(--ap-surface);box-shadow:0 1px 2px rgba(0,0,0,.05),0 4px 12px -6px rgba(0,0,0,.12);color:var(--ap-text);cursor:pointer;text-align:left;user-select:none;transition:border-color .12s,box-shadow .12s}
+    .ap-node:hover{border-color:color-mix(in srgb,var(--ap-kind) 70%,transparent);box-shadow:0 1px 2px rgba(0,0,0,.06),0 8px 18px -8px rgba(0,0,0,.2)}
+    .ap-node.no-agent{border-style:dashed;background:color-mix(in srgb,var(--ap-surface) 55%,var(--ap-canvas));box-shadow:none;cursor:default}.ap-node.no-agent:hover{border-color:color-mix(in srgb,var(--ap-kind) 34%,var(--ap-hairline))}
+    .ap-node.root{border-style:solid;border-color:color-mix(in srgb,var(--ap-kind) 55%,transparent);background:color-mix(in srgb,var(--ap-kind) 7%,var(--ap-surface));box-shadow:0 1px 2px rgba(0,0,0,.05),0 4px 12px -6px rgba(0,0,0,.12)}
+    .ap-node.selected{border-color:var(--ap-accent);box-shadow:0 0 0 3px var(--ap-focus)}
+    .ap-node-top{display:flex;align-items:center;gap:6px;font-size:11px;line-height:16px}.ap-kind{display:inline-flex;align-items:center;gap:5px;color:var(--ap-kind);font-weight:600}.ap-kind::before{width:6px;height:6px;border-radius:2px;background:currentColor;content:""}
+    .ap-state{display:inline-flex;align-items:center;gap:5px;margin-left:auto;color:var(--ap-muted);white-space:nowrap}.ap-state i{width:6px;height:6px;border-radius:50%;background:var(--ap-muted)}
+    .ap-state.running i{background:var(--ap-accent);animation:ap-pulse 1.4s ease-in-out infinite}.ap-state.success i{background:var(--ap-success)}.ap-state.waiting i{background:var(--ap-warning)}.ap-state.error i{background:var(--ap-danger)}.ap-state.error{color:var(--ap-danger)}
+    .ap-node-title{display:-webkit-box;overflow:hidden;font-size:13px;font-weight:600;line-height:18px;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+    .ap-node-foot{overflow:hidden;margin-top:auto;color:var(--ap-muted);font-size:11px;line-height:14px;text-overflow:ellipsis;white-space:nowrap}.ap-id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ap-reason{color:var(--ap-warning)}
+    .ap-empty{display:grid;height:100%;place-content:center;justify-items:center;gap:6px;padding:28px;color:var(--ap-muted);text-align:center}.ap-empty-tile{display:grid;width:40px;height:40px;place-items:center;margin-bottom:6px;border-radius:var(--ap-radius-lg);background:var(--ap-fill);color:var(--ap-muted)}
+    .ap-empty strong{color:var(--ap-text);font-size:14px;font-weight:600}.ap-empty span{max-width:320px;font-size:12px;line-height:1.6}.ap-loading{width:20px;height:20px;border:2px solid var(--ap-fill-pressed);border-top-color:var(--ap-accent);border-radius:50%;animation:ap-spin .8s linear infinite}
+    @keyframes ap-flow{to{stroke-dashoffset:-12}}@keyframes ap-spin{to{transform:rotate(360deg)}}@keyframes ap-pulse{50%{opacity:.4}}
+    @media (prefers-reduced-motion:reduce){.ap-link.live,.ap-loading,.ap-state.running i,.ap-btn.spinning svg{animation:none}}
+    @media (max-width:520px){.ap-head{flex-wrap:wrap}.ap-legend{order:3;width:100%;margin-left:0}}
   `;
   document.head.append(style);
 }
@@ -328,16 +413,12 @@ function createController(host) {
   let canvas = null;
   let zoomLabel = null;
   let operationBar = null;
-
-  const applyTheme = (theme) => {
-    document.documentElement.dataset.xsecTheme = theme?.["color-mode"] === "light" ? "light" : "dark";
-  };
-  applyTheme({ "color-mode": getComputedStyle(document.documentElement).getPropertyValue("--xsec-color-mode").trim() });
-  const themeSubscription = host.onTheme(applyTheme);
+  let refreshButton = null;
 
   const showStatus = (message) => {
     if (!status) return;
-    status.textContent = message ?? "";
+    status.replaceChildren();
+    if (message) status.append(icon("alert", 14), element("span", "", message));
     status.classList.toggle("show", Boolean(message));
     status.title = message ?? "";
   };
@@ -351,7 +432,18 @@ function createController(host) {
     const rootPosition = model.positions.get(model.rootId);
     if (!rootPosition) return;
     const rect = canvas.getBoundingClientRect();
-    view = { x: rect.width / 2 - rootPosition.x - NODE_WIDTH / 2, y: 36 - rootPosition.y, scale: 1 };
+    const rootView = viewPosition(rootPosition);
+    // 图比视口宽时缩小到能看全（不小于 60%）并按整张图居中；否则 100%，根节点居中。
+    let left = Infinity;
+    let right = -Infinity;
+    for (const position of model.positioned) {
+      const place = viewPosition(position);
+      left = Math.min(left, place.x);
+      right = Math.max(right, place.x + NODE_VIEW_WIDTH);
+    }
+    const scale = Math.max(FIT_MIN_SCALE, Math.min(1, (rect.width - FIT_MARGIN * 2) / (right - left)));
+    const focusX = scale < 1 ? (left + right) / 2 : rootView.x + NODE_VIEW_WIDTH / 2;
+    view = { x: rect.width / 2 - focusX * scale, y: 40 - rootView.y * scale, scale };
     applyTransform();
   };
   const zoomTo = (nextScale, origin) => {
@@ -367,7 +459,9 @@ function createController(host) {
   const renderEmpty = (title, description, spinner = false) => {
     if (!canvas) return;
     const empty = element("div", "ap-empty");
-    if (spinner) empty.append(element("span", "ap-loading"));
+    const tile = element("span", "ap-empty-tile");
+    tile.append(spinner ? element("span", "ap-loading") : icon("branch", 20));
+    empty.append(tile);
     empty.append(element("strong", "", title), element("span", "", description));
     canvas.replaceChildren(empty);
     legend?.replaceChildren();
@@ -408,27 +502,32 @@ function createController(host) {
     const ids = displayIds(nodes, model.rootId);
     legend.replaceChildren();
     for (const kind of ["task", "action", "finding"]) {
-      legend.append(element("i", `ap-dot ${kind}`), document.createTextNode(`${kind[0].toUpperCase()}${kind.slice(1)} `), element("b", "", String(model.counts[kind])));
+      legend.append(element("span", `ap-badge ${kind}`, `${KIND_LABELS[kind]} ${model.counts[kind]}`));
     }
+    const stageWidth = model.stage.width * VIEW_SCALE_X;
+    const stageHeight = model.stage.height * VIEW_SCALE_Y;
     const stage = element("div", "ap-stage");
-    stage.style.width = `${model.stage.width}px`;
-    stage.style.height = `${model.stage.height}px`;
+    stage.style.width = `${stageWidth}px`;
+    stage.style.height = `${stageHeight}px`;
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("class", "ap-links");
-    svg.setAttribute("width", String(model.stage.width));
-    svg.setAttribute("height", String(model.stage.height));
+    svg.setAttribute("width", String(stageWidth));
+    svg.setAttribute("height", String(stageHeight));
     for (const node of nodes) {
       if (!node.parent_id) continue;
-      const parent = model.positions.get(node.parent_id);
-      const child = model.positions.get(node.id);
-      if (!parent || !child) continue;
-      const sx = parent.x + NODE_WIDTH / 2;
-      const sy = parent.y + NODE_HEIGHT;
-      const ex = child.x + NODE_WIDTH / 2;
+      const parentPosition = model.positions.get(node.parent_id);
+      const childPosition = model.positions.get(node.id);
+      if (!parentPosition || !childPosition) continue;
+      const parent = viewPosition(parentPosition);
+      const child = viewPosition(childPosition);
+      const sx = parent.x + NODE_VIEW_WIDTH / 2;
+      const sy = parent.y + NODE_VIEW_HEIGHT;
+      const ex = child.x + NODE_VIEW_WIDTH / 2;
       const ey = child.y;
-      const mid = sy + Math.max(32, (ey - sy) / 2);
+      const mid = sy + Math.max(20, (ey - sy) / 2);
+      const live = subagentStatusStyle(model.subagentsByNode.get(node.id)?.status).tone === "running";
       const path = document.createElementNS(SVG_NS, "path");
-      path.setAttribute("class", `ap-link ${nodeKind(node, model.rootId)}`);
+      path.setAttribute("class", `ap-link ${nodeKind(node, model.rootId)}${live ? " live" : ""}`);
       path.setAttribute("d", `M ${sx} ${sy} C ${sx} ${mid}, ${ex} ${mid}, ${ex} ${ey}`);
       svg.append(path);
     }
@@ -436,18 +535,30 @@ function createController(host) {
     for (const position of model.positioned) {
       const node = position.node;
       const kind = nodeKind(node, model.rootId);
+      const kindLabel = node.parent_id ? KIND_LABELS[kind] : "根任务";
       const subagent = model.subagentsByNode.get(node.id);
       const selected = selectedSubagentId === subagent?.id;
-      const button = element("button", `ap-node ${kind}${subagent ? "" : " no-agent"}${selected ? " selected" : ""}`);
+      const place = viewPosition(position);
+      const button = element("button", `ap-node ${kind}${node.parent_id ? "" : " root"}${subagent ? "" : " no-agent"}${selected ? " selected" : ""}`);
       button.type = "button";
-      button.style.transform = `translate(${position.x}px,${position.y}px)`;
-      button.setAttribute("aria-label", `${kind} 节点：${node.title}`);
+      button.style.transform = `translate(${place.x}px,${place.y}px)`;
+      button.setAttribute("aria-label", `${kindLabel}节点：${node.title}`);
       button.setAttribute("aria-pressed", String(selected));
       if (!subagent) button.setAttribute("aria-disabled", "true");
-      const reason = subagent?.status_reason ? `\n原因: ${subagent.status_reason}` : "";
-      button.title = subagent ? `状态: ${subagent.status}${reason}` : "尚未派发子 Agent";
-      button.append(element("span", "ap-chip", `${kind[0].toUpperCase()}${kind.slice(1)}`), element("span", "ap-node-title", node.title), element("span", "ap-id", ids.get(node.id) ?? node.id));
-      if (subagent?.status_reason) button.append(element("span", "ap-reason", subagent.status_reason));
+      const state = subagent ? subagentStatusStyle(subagent.status) : null;
+      const reason = subagent?.status_reason ? `\n原因：${subagent.status_reason}` : "";
+      button.title = state ? `${node.title}\n状态：${state.label}${reason}` : `${node.title}\n尚未派发子 Agent`;
+      const top = element("span", "ap-node-top");
+      top.append(element("span", "ap-kind", kindLabel));
+      if (state) {
+        const badge = element("span", `ap-state ${state.tone}`);
+        badge.append(element("i"), document.createTextNode(state.label));
+        top.append(badge);
+      }
+      const foot = subagent?.status_reason
+        ? element("span", "ap-node-foot ap-reason", subagent.status_reason)
+        : element("span", "ap-node-foot ap-id", ids.get(node.id) ?? node.id);
+      button.append(top, element("span", "ap-node-title", node.title), foot);
       if (subagent) button.addEventListener("click", () => void openSubagent(subagent, node.title, button));
       stage.append(button);
     }
@@ -477,9 +588,9 @@ function createController(host) {
     operationBar.classList.toggle("show", operations.length > 0);
     operationBar.replaceChildren();
     if (!operations.length) return;
-    operationBar.append(element("span", "", `${operations.length} 个 Host 操作待恢复，报告终结已阻断`));
+    operationBar.append(icon("alert", 14), element("span", "", `${operations.length} 个 Host 操作待恢复，报告终结已阻断`));
     for (const operation of operations) {
-      const button = element("button", "", `恢复 ${operation.operation?.type ?? operation.operationId}`);
+      const button = element("button", "ap-action", `恢复 ${operation.operation?.type ?? operation.operationId}`);
       button.type = "button";
       button.title = operation.result?.result?.diagnostic ?? operation.result?.diagnostic ?? operation.operationId;
       button.addEventListener("click", () => void resumeOperation(operation, button));
@@ -529,6 +640,7 @@ function createController(host) {
   const load = async () => {
     if (disposed || loading || !visible || !assignmentId) return;
     loading = true;
+    refreshButton?.classList.add("spinning");
     const generation = ++requestGeneration;
     let succeeded = false;
     if (!nodes.length) renderEmpty("正在读取攻击路径", "正在同步节点与子 Agent 状态…", true);
@@ -558,6 +670,7 @@ function createController(host) {
     } finally {
       if (generation === requestGeneration) {
         loading = false;
+        refreshButton?.classList.remove("spinning");
         applyRefreshAfterLoad(succeeded);
       }
     }
@@ -582,38 +695,41 @@ function createController(host) {
     shell.setAttribute("aria-label", "攻击路径");
     const head = element("header", "ap-head");
     head.append(element("span", "ap-title", "攻击路径"));
-    status = element("span", "ap-status");
+    status = element("div", "ap-strip ap-status");
     status.setAttribute("role", "status");
     legend = element("span", "ap-legend");
     const controls = element("span", "ap-controls");
-    const zoomOut = element("button", "", "−");
-    zoomOut.type = "button";
-    zoomOut.title = "缩小";
-    zoomOut.setAttribute("aria-label", "缩小攻击路径");
-    zoomOut.addEventListener("click", () => zoomTo(view.scale - 0.1));
-    zoomLabel = element("button", "", "100%");
-    zoomLabel.type = "button";
-    zoomLabel.title = "重置视图";
-    zoomLabel.setAttribute("aria-label", "重置攻击路径视图");
-    zoomLabel.addEventListener("click", resetView);
-    const zoomIn = element("button", "", "+");
-    zoomIn.type = "button";
-    zoomIn.title = "放大";
-    zoomIn.setAttribute("aria-label", "放大攻击路径");
-    zoomIn.addEventListener("click", () => zoomTo(view.scale + 0.1));
-    const refresh = element("button", "", "↻");
-    refresh.type = "button";
-    refresh.title = "刷新攻击路径";
-    refresh.setAttribute("aria-label", "刷新攻击路径");
-    refresh.addEventListener("click", requestRefresh);
-    controls.append(zoomOut, zoomLabel, zoomIn, refresh);
-    head.append(status, legend, controls);
-    operationBar = element("div", "ap-operations");
+    const control = (className, label, tip, child, onClick) => {
+      const button = element("button", `ap-btn ${className}`);
+      button.type = "button";
+      button.title = tip;
+      button.setAttribute("aria-label", label);
+      button.append(child);
+      button.addEventListener("click", onClick);
+      return button;
+    };
+    const zoom = element("span", "ap-zoom");
+    zoomLabel = control("ap-scale", "重置攻击路径视图", "重置视图", document.createTextNode("100%"), resetView);
+    zoom.append(
+      control("", "缩小攻击路径", "缩小", icon("minus"), () => zoomTo(view.scale - 0.1)),
+      zoomLabel,
+      control("", "放大攻击路径", "放大", icon("plus"), () => zoomTo(view.scale + 0.1)),
+    );
+    refreshButton = control("ap-refresh", "刷新攻击路径", "刷新攻击路径", icon("refresh"), requestRefresh);
+    controls.append(zoom, refreshButton);
+    head.append(legend, controls);
+    operationBar = element("div", "ap-strip ap-operations");
     canvas = element("div", "ap-canvas");
+    // 与 Desktop 的画布一致：Ctrl/⌘ + 滚轮或触摸板捏合以指针为中心缩放，普通滚动平移。
     canvas.addEventListener("wheel", (event) => {
       event.preventDefault();
-      const rect = canvas.getBoundingClientRect();
-      zoomTo(view.scale + (event.deltaY > 0 ? -0.1 : 0.1), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+      if (event.ctrlKey || event.metaKey) {
+        const rect = canvas.getBoundingClientRect();
+        zoomTo(view.scale * WHEEL_ZOOM_RATE ** -event.deltaY, { x: event.clientX - rect.left, y: event.clientY - rect.top });
+        return;
+      }
+      view = { ...view, x: view.x - event.deltaX, y: view.y - event.deltaY };
+      applyTransform();
     }, { passive: false });
     canvas.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || event.target.closest(".ap-node")) return;
@@ -634,7 +750,7 @@ function createController(host) {
     };
     canvas.addEventListener("pointerup", stopDrag);
     canvas.addEventListener("pointercancel", stopDrag);
-    shell.append(head, operationBar, canvas);
+    shell.append(head, status, operationBar, canvas);
     root.replaceChildren(shell);
     resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => applyTransform()) : null;
     resizeObserver?.observe(canvas);
@@ -688,7 +804,6 @@ function createController(host) {
       clearRefreshRetry();
       resourceSubscription?.dispose();
       resizeObserver?.disconnect();
-      themeSubscription.dispose();
       root?.replaceChildren();
       console.debug("attack_path.dispose");
     },
