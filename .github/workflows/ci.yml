@@ -22,6 +22,8 @@ jobs:
         run: node scripts/verify-portable-contract.mjs
       - name: Verify refresh retry lifecycle
         run: node --test scripts/verify-refresh-retry.mjs
+      - name: Verify top-bar counts
+        run: node --test scripts/verify-graph-counts.mjs
 
   source-preflight:
     needs: manifest
