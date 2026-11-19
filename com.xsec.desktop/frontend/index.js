@@ -161,9 +161,7 @@ export function graphModel(nodes, subagents) {
     if (subagent.node_id && !subagentsByNode.has(subagent.node_id)) subagentsByNode.set(subagent.node_id, subagent);
   }
   const counts = { task: 0, action: 0, finding: 0 };
-  for (const node of nodes) {
-    if (node.parent_id) counts[nodeKind(node, rootId)] += 1;
-  }
+  for (const node of nodes) counts[nodeKind(node, rootId)] += 1;
   return {
     rootId,
     layout,
